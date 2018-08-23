@@ -179,7 +179,8 @@ class GroupEditController(object):
 
     def _update_appstruct(self):
         group = self.group
-        self.form.set_appstruct({
+
+        appstruct = {
             # `group.creator` is nullable but "Creator" is currently a required
             # field, so the user will have to pick one when editing the group.
             'creator': group.creator.username if group.creator else '',
@@ -188,9 +189,15 @@ class GroupEditController(object):
             'group_type': group.type,
             'name': group.name,
             'members': [m.username for m in group.members],
-            'organization': group.organization.pubid,
             'origins': [s.origin for s in group.scopes],
-        })
+        }
+
+        if group.organization:
+            appstruct['organization'] = group.organization.pubid
+        else:
+            appstruct['organization'] = None
+
+        self.form.set_appstruct(appstruct)
 
     def _template_context(self):
         num_annotations = self.request.db.query(Annotation).filter_by(groupid=self.group.pubid).count()
