@@ -2,8 +2,6 @@
 
 from __future__ import unicode_literals
 
-import re
-
 import pyramid.compat
 from pyramid import interfaces
 from pyramid.authentication import BasicAuthAuthenticationPolicy
@@ -13,10 +11,13 @@ from zope import interface
 
 from h.auth import util
 
-# As we roll out the new API Auth Policy with Auth Token Policy, we
-# want to keep it restricted to certain endpoints
-# Currently restricted to `POST /api/groups*` only
-AUTH_TOKEN_PATH_PATTERN = r"^/api/groups"
+#: List of route name-method combinations that should
+#: allow AuthClient authentication
+AUTH_CLIENT_API_WHITELIST = [
+    ('api.groups', 'POST'),
+    ('api.group_member', 'POST'),
+    ('api.users', 'POST'),
+]
 
 
 @interface.implementer(interfaces.IAuthenticationPolicy)
@@ -359,14 +360,19 @@ def _is_client_request(request):
     """
     Is client_auth authentication valid for the given request?
 
-    For initial rollout, authentication should be performed by
+    Uuthentication should be performed by
     :py:class:`~h.auth.policy.AuthClientPolicy` only for requests
-    to the `POST /api/groups` endpoint.
+    that match the whitelist.
 
-    This is intended to be temporary.
+    The whitelist will likely evolve.
+
+    :rtype: Boolean
     """
-    return (re.match(AUTH_TOKEN_PATH_PATTERN, request.path) and
-            request.method == 'POST')
+    if request.matched_route:
+        for (route_name, allowed_method) in AUTH_CLIENT_API_WHITELIST:
+            if (request.method == allowed_method and request.matched_route.name == route_name):
+                return True
+    return False
 
 
 def _is_ws_request(request):
