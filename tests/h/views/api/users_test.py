@@ -15,9 +15,7 @@ from h.services.user_unique import UserUniqueService, DuplicateUserError
 from h.views.api.users import create, update
 
 
-@pytest.mark.usefixtures('auth_client',
-                         'request_auth_client',
-                         'validate_auth_client_authority',
+@pytest.mark.usefixtures('client_authority',
                          'user_signup_service',
                          'user_unique_svc')
 class TestCreate(object):
@@ -89,6 +87,11 @@ class TestCreate(object):
 
         with pytest.raises(PayloadError):
             create(pyramid_request)
+
+    @pytest.fixture
+    def client_authority(self, patch):
+        patched = patch('h.views.api.users.client_authority')
+        patched.return_value = 'weylandindustries.com'
 
     @pytest.fixture
     def valid_payload(self):
