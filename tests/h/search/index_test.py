@@ -299,7 +299,7 @@ class TestIndex(object):
         assert SearchResponseWithIDs([annotation.id]) == response
 
     @pytest.fixture
-    def annotations(self, factories, index):
+    def annotations(self, factories, index, moderation_service):
         """
         Add some annotations to Elasticsearch as "noise".
 
@@ -316,6 +316,7 @@ class TestIndex(object):
         )
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestDelete(object):
     def test_annotation_is_marked_deleted(self, es_client, factories, get_indexed_ann, index):
         annotation = factories.Annotation.build(id="test_annotation_id")
@@ -328,6 +329,7 @@ class TestDelete(object):
         assert get_indexed_ann(annotation.id).get('deleted') is True
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestBatchIndexer(object):
     def test_it_indexes_all_annotations(self, batch_indexer, factories, get_indexed_ann):
         annotations = factories.Annotation.create_batch(3)
@@ -442,6 +444,7 @@ class TestBatchIndexer(object):
         assert errored == expected_errored_ids
 
 
+@pytest.mark.usefixtures('moderation_service')
 class SearchResponseWithIDs(Matcher):
     """
     Matches an elasticsearch_dsl response with the given annotation ids.

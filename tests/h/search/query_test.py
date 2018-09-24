@@ -3,12 +3,15 @@ from __future__ import unicode_literals
 
 import datetime
 import elasticsearch_dsl
+import mock
 import pytest
 import webob
 
 from h.search import Search, index, query
 from hypothesis import strategies as st
 from hypothesis import given
+
+from h.services.annotation_moderation import AnnotationModerationService
 
 MISSING = object()
 ES_VERSION = (1, 7, 0)
@@ -18,6 +21,7 @@ LIMIT_MAX = query.LIMIT_MAX
 OFFSET_MAX = query.OFFSET_MAX
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestLimiter(object):
     def test_it_limits_number_of_annotations(self, Annotation, search):
         ann_ids = [Annotation().id,
@@ -104,6 +108,7 @@ class TestLimiter(object):
         return search
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestKeyValueMatcher(object):
     def test_ands_multiple_key_values(self, Annotation, search):
         ann_ids = [Annotation().id,
@@ -123,6 +128,7 @@ class TestKeyValueMatcher(object):
         return search
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestSorter(object):
     @pytest.mark.parametrize("sort_key,order,expected_order", [
         # Sort supports "updated" and "created" fields.
@@ -234,6 +240,7 @@ class TestSorter(object):
         assert result.annotation_ids == ann_ids
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestTopLevelAnnotationsFilter(object):
 
     def test_it_filters_out_replies_but_leaves_annotations_in(self, Annotation, search):
@@ -250,6 +257,7 @@ class TestTopLevelAnnotationsFilter(object):
         return search
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestAuthorityFilter(object):
     def test_it_filters_out_non_matching_authorities(self, Annotation, search):
         annotations_auth1 = [Annotation(userid="acct:foo@auth1").id,
@@ -268,6 +276,7 @@ class TestAuthorityFilter(object):
         return search
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestAuthFilter(object):
     def test_logged_out_user_can_not_see_private_annotations(self, search, Annotation):
         Annotation()
@@ -314,6 +323,7 @@ class TestAuthFilter(object):
         return search
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestGroupFilter(object):
     def test_matches_only_annotations_from_specified_group(self, search, Annotation, group):
         Annotation(groupid='group2')
@@ -335,6 +345,7 @@ class TestGroupFilter(object):
         return factories.OpenGroup(name="group1", pubid="group1id")
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestGroupAuthFilter(object):
     def test_does_not_return_annotations_if_group_not_readable_by_user(
         self, search, Annotation, group_service,
@@ -366,6 +377,7 @@ class TestGroupAuthFilter(object):
         return search
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestUserFilter(object):
     def test_filters_annotations_by_user(self, search, Annotation):
         Annotation(userid="acct:foo@auth2", shared=True)
@@ -408,6 +420,7 @@ class TestUserFilter(object):
         return search
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestUriFilter(object):
     @pytest.mark.parametrize("field", ("uri", "url"))
     def test_filters_by_field(self, search, Annotation, field):
@@ -494,6 +507,7 @@ class TestUriFilter(object):
         return patch('h.search.query.storage')
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestUriCombinedWildcardFilter():
 
     @pytest.mark.parametrize('params,expected_ann_indexes,separate_keys', [
@@ -602,6 +616,7 @@ def test_identifies_wildcard_uri_is_valid(wildcard_uri, expected):
     assert query.wildcard_uri_is_valid(wildcard_uri) == expected
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestDeletedFilter(object):
 
     def test_excludes_deleted_annotations(self, search, es_client, Annotation):
@@ -622,14 +637,54 @@ class TestDeletedFilter(object):
         return search
 
 
-@pytest.mark.usefixtures('pyramid_config')
-class TestNipsaFilter(object):
+@pytest.mark.usefixtures('pyramid_config', 'moderation_service')
+class TestHiddenFilter(object):
+
+    @pytest.mark.parametrize('nipsa_val,hidden_val,show_val', [
+        # both nipsa and hidden fields are set, so hide the annotation
+        (True, True, False),
+        # only nipsa field is set, still hide the annotation
+        (True, False, False),
+        # only hidden field is set, still hide the annotation
+        (False, True, False),
+        # neither field is set, don't hide the annotation
+        (False, False, True),
+    ])
+    def test_visibility_of_moderated_and_nipsaed_annotations(
+        self, index, factories, pyramid_request, search, user,
+        AnnotationSearchIndexPresenter, nipsa_val, hidden_val, show_val
+    ):
+
+        pyramid_request.user = user
+        search.append_modifier(query.HiddenFilter(pyramid_request))
+
+        annotation_1 = factories.Annotation.build()
+        annotation_2 = factories.Annotation.build(userid=user.userid)
+        expected_ids = [annotation_2.id]
+
+        if show_val:
+            expected_ids.append(annotation_1.id)
+
+        presenter = AnnotationSearchIndexPresenter.return_value
+        presenter.asdict.return_value = {'id': annotation_1.id,
+                                         'hidden': hidden_val,
+                                         'nipsa': nipsa_val}
+        index(annotation_1)
+
+        presenter.asdict.return_value = {'id': annotation_2.id,
+                                         'hidden': False,
+                                         'nipsa': False}
+        index(annotation_2)
+
+        result = search.run({})
+
+        assert sorted(result.annotation_ids) == sorted(expected_ids)
 
     def test_hides_banned_users_annotations_from_other_users(
         self, pyramid_request, search, banned_user, user, Annotation
     ):
         pyramid_request.user = user
-        search.append_modifier(query.NipsaFilter(pyramid_request))
+        search.append_modifier(query.HiddenFilter(pyramid_request))
         Annotation(userid=banned_user.userid)
         expected_ids = [Annotation(userid=user.userid).id]
 
@@ -641,7 +696,7 @@ class TestNipsaFilter(object):
         self, pyramid_request, search, banned_user, user, Annotation
     ):
         pyramid_request.user = banned_user
-        search.append_modifier(query.NipsaFilter(pyramid_request))
+        search.append_modifier(query.HiddenFilter(pyramid_request))
         expected_ids = [Annotation(userid=banned_user.userid).id]
 
         result = search.run({})
@@ -654,7 +709,7 @@ class TestNipsaFilter(object):
     ):
         pyramid_request.user = user
         group_service.groupids_created_by.return_value = ["created_by_banneduser"]
-        search.append_modifier(query.NipsaFilter(pyramid_request))
+        search.append_modifier(query.HiddenFilter(pyramid_request))
         expected_ids = [Annotation(groupid="created_by_banneduser",
                                    userid=banned_user.userid).id]
 
@@ -687,6 +742,7 @@ class TestNipsaFilter(object):
         return group_service
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestAnyMatcher(object):
     def test_matches_uriparts(self, search, Annotation):
         Annotation(target_uri="http://bar.com")
@@ -767,6 +823,7 @@ class TestAnyMatcher(object):
         return AnnotationWithDefaults
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestTagsMatcher(object):
     def test_matches_tag_key(self, search, Annotation):
         Annotation(shared=True)
@@ -811,6 +868,7 @@ class TestTagsMatcher(object):
         return search
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestRepliesMatcher(object):
     def test_matches_unnested_replies_to_annotations(self, Annotation, search):
         ann1 = Annotation()
@@ -848,6 +906,7 @@ class TestRepliesMatcher(object):
         assert sorted(result.annotation_ids) == sorted(expected_reply_ids)
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestTagsAggregation(object):
     def test_it_returns_annotation_counts_by_tag(self, Annotation, search):
         for i in range(2):
@@ -886,6 +945,7 @@ class TestTagsAggregation(object):
         assert count_for_tag_c == 2
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestUsersAggregation(object):
     def test_it_returns_annotation_counts_by_user(self, Annotation, search):
         for i in range(2):
@@ -938,3 +998,19 @@ def es_dsl_search(pyramid_request):
         using=pyramid_request.es.conn,
         index=pyramid_request.es.index,
     )
+
+
+@pytest.fixture
+def moderation_service(pyramid_config):
+    svc = mock.create_autospec(AnnotationModerationService, spec_set=True, instance=True)
+    svc.all_hidden.return_value = []
+    svc.hidden.return_value = False
+    pyramid_config.register_service(svc, name='annotation_moderation')
+    return svc
+
+
+@pytest.fixture
+def AnnotationSearchIndexPresenter(patch):
+    class_ = patch('h.search.index.presenters.AnnotationSearchIndexPresenter')
+    class_.return_value.asdict.return_value = {'test': 'val'}
+    return class_

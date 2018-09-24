@@ -12,8 +12,13 @@ from __future__ import unicode_literals
 import datetime
 
 from h import search
+import mock
+import pytest
+
+from h.services.annotation_moderation import AnnotationModerationService
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestSearch(object):
     """Unit tests for search.Search when no separate_replies argument is given."""
 
@@ -131,6 +136,7 @@ class TestSearch(object):
         assert params == original_params
 
 
+@pytest.mark.usefixtures('moderation_service')
 class TestSearchWithSeparateReplies(object):
     """Unit tests for search.Search when separate_replies=True is given."""
 
@@ -237,3 +243,12 @@ class TestSearchWithSeparateReplies(object):
 
         assert len(result.reply_ids) == 3
         assert oldest_reply.id not in result.reply_ids
+
+
+@pytest.fixture
+def moderation_service(pyramid_config):
+    svc = mock.create_autospec(AnnotationModerationService, spec_set=True, instance=True)
+    svc.all_hidden.return_value = []
+    svc.hidden.return_value = False
+    pyramid_config.register_service(svc, name='annotation_moderation')
+    return svc
