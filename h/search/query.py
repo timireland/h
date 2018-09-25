@@ -27,14 +27,27 @@ def wildcard_uri_is_valid(wildcard_uri):
     if "*" not in wildcard_uri and "?" not in wildcard_uri:
         return False
     try:
-        normalized_uri = urlparse.urlparse(wildcard_uri.replace("*", "").replace("?", ""))
+        normalized_uri = urlparse.urlparse(wildcard_uri.replace("*", ""))
+        # If the normalized uri has no path component but has a query component.
+        if (not normalized_uri.path and
+                normalized_uri.netloc and
+                normalized_uri.query):
+            uri_parts = (normalized_uri.scheme, normalized_uri.netloc, "", normalized_uri.query, "", "")
+            begining_of_uri = urlparse.urlunparse(uri_parts).replace("/;","?")
+        # If the normalized uri has no path component and has a "*" at the end of the domain..
+        elif (not normalized_uri.path and
+                normalized_uri.netloc and
+                not normalized_uri.port and
+                wildcard_uri.endswith("*")):
+            uri_parts = (normalized_uri.scheme, normalized_uri.netloc+"*", "", "", "", "")
+            begining_of_uri = urlparse.urlunparse(uri_parts)
+        else:
+            # Remove all parts of the url except the scheme, netloc, and provide a substitute
+            # path value "p" so that uri's that only have a scheme and path are still valid.
+            uri_parts = (normalized_uri.scheme, normalized_uri.netloc, "p", "", "", "")
 
-        # Remove all parts of the url except the scheme, netloc, and provide a substitute
-        # path value "p" so that uri's that only have a scheme and path are still valid.
-        uri_parts = (normalized_uri.scheme, normalized_uri.netloc, "p", "", "", "")
-
-        # Remove the "p" standing for path from the end of the uri.
-        begining_of_uri = urlparse.urlunparse(uri_parts)[:-1]
+            # Remove the "p" standing for path from the end of the uri.
+            begining_of_uri = urlparse.urlunparse(uri_parts)[:-1]
 
         # If a wildcard was in the scheme the uri may come back as "" (a falsey value).
         if begining_of_uri and wildcard_uri.startswith(begining_of_uri):
